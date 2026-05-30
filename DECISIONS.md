@@ -19,6 +19,20 @@ Chosen for zero-cost, zero-config hosting. Trade-off: a public repo means the co
 anyone. That's harmless here — there are no secrets, no backend, and no user data. (A private repo
 would have required Netlify instead.)
 
+**Deploy method (current): `gh-pages` branch, not GitHub Actions.** The `gh` login used to create
+the repo lacked the `workflow` permission, so GitHub blocked pushing the Actions workflow files.
+The site is therefore deployed the classic way: `npm run build`, then the built `dist/` is pushed
+to a `gh-pages` branch which Pages serves. The Actions workflows are kept ready in
+`.github/workflows-pending/` — see that folder's README to re-enable them with one command
+(`gh auth refresh -s workflow`). To redeploy manually after a change:
+
+```bash
+npm run build
+cd dist && touch .nojekyll && rm -rf .git && git init -q && git checkout -b gh-pages \
+  && git add -A && git commit -m "deploy" \
+  && git push https://github.com/masterhan/sugarspark-bakery.git gh-pages:gh-pages
+```
+
 ## Art is decoupled (placeholder system)
 
 The build does NOT generate raster art. Instead, every picture is a logical key (e.g.

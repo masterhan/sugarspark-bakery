@@ -68,11 +68,22 @@ real art:
 
 ## 🚀 Put it on the internet (GitHub Pages — free)
 
-This repo is already set up to publish itself. Every time code is pushed to the `main` branch,
-GitHub automatically builds the game and updates the public web address above.
+The game is already published at the address above. It's served from the repo's **`gh-pages`
+branch** (a branch that holds the built site).
 
-One-time setup on GitHub: open the repo's **Settings → Pages**, and set **Source** to
-**"GitHub Actions."** That's it.
+To publish a change, build and push the built site:
+
+```bash
+npm run build
+cd dist && touch .nojekyll && rm -rf .git && git init -q && git checkout -b gh-pages \
+  && git add -A && git commit -m "deploy" \
+  && git push https://github.com/masterhan/sugarspark-bakery.git gh-pages:gh-pages
+```
+
+**Want it to publish itself automatically on every push?** That needs a one-time permission grant —
+see `.github/workflows-pending/README.md` (run `gh auth refresh -h github.com -s workflow`, move the
+two workflow files into `.github/workflows/`, and set **Settings → Pages → Source** to
+**"GitHub Actions"**).
 
 ---
 
