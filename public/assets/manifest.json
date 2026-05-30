@@ -1,0 +1,8 @@
+{
+  "useRealArt": false,
+  "atlas": {
+    "texture": "atlas/bakery.png",
+    "data": "atlas/bakery.json"
+  },
+  "frames": {}
+}

@@ -1,0 +1,6 @@
+dist
+node_modules
+coverage
+public/assets/atlas
+public/assets/audio
+package-lock.json
