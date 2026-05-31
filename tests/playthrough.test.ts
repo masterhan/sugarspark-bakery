@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TypedEmitter } from '../src/events/EventBus';
 import { GameController } from '../src/state/GameController';
+import { SaveSystem, type StorageLike } from '../src/systems/SaveSystem';
 import { getRecipe, treatIds } from '../src/data/recipes';
 import type { IngredientId, TreatId, UpgradeId } from '../src/data/types';
 
@@ -13,6 +14,20 @@ function makeRng(seed: number): () => number {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/** In-memory storage so save/reload can be tested without a browser. */
+class MemStorage implements StorageLike {
+  private m = new Map<string, string>();
+  getItem(k: string): string | null {
+    return this.m.has(k) ? this.m.get(k)! : null;
+  }
+  setItem(k: string, v: string): void {
+    this.m.set(k, v);
+  }
+  removeItem(k: string): void {
+    this.m.delete(k);
+  }
 }
 
 /** Make sure we can afford to bake `recipeId` by buying any missing ingredients. */
@@ -32,12 +47,10 @@ function stockFor(game: GameController, recipeId: TreatId): void {
  * child would do — it just runs in milliseconds and is fully deterministic.
  */
 function autoPlayStep(game: GameController): void {
-  // 1) Serve every waiting customer whose treat is in stock.
   for (const customer of [...game.customers.active]) {
     if (game.state.getFinished(customer.wantedTreat) > 0) game.serve(customer.id);
   }
 
-  // 2) Bake on every free oven — prefer the most valuable unlocked recipe we can stock.
   const byValueDesc = [...game.state.unlockedRecipes].sort(
     (a, b) => getRecipe(b).sellPrice - getRecipe(a).sellPrice,
   );
@@ -52,14 +65,23 @@ function autoPlayStep(game: GameController): void {
         }
       }
     }
-    if (!baked) break; // couldn't afford/stock anything right now
+    if (!baked) break;
   }
 
-  // 3) Buy upgrades the moment they're affordable (cheapest-impactful first).
   const wishlist: UpgradeId[] = ['speedyOven', 'biggerDisplay', 'cheerySign', 'secondOven'];
   for (const id of wishlist) {
     if (game.shop.canBuyUpgrade(id)) game.buyUpgrade(id);
   }
+}
+
+function runFor(game: GameController, ticks: number, dtMs = 100): number {
+  let minCoins = game.state.coins;
+  for (let i = 0; i < ticks; i++) {
+    game.tick(dtMs);
+    autoPlayStep(game);
+    if (game.state.coins < minCoins) minCoins = game.state.coins;
+  }
+  return minCoins;
 }
 
 describe('full play-through (auto-played, deterministic)', () => {
@@ -70,33 +92,18 @@ describe('full play-through (auto-played, deterministic)', () => {
     const unlocks: TreatId[] = [];
     bus.on('RECIPE_UNLOCKED', (p) => unlocks.push(p.recipeId));
 
-    const DT = 100; // ms per tick
-    const TICKS = 18000; // ~30 minutes of simulated play
-    let minCoinsSeen = game.state.coins;
+    const minCoinsSeen = runFor(game, 18000); // ~30 minutes of simulated play
 
-    for (let i = 0; i < TICKS; i++) {
-      game.tick(DT);
-      autoPlayStep(game);
-      if (game.state.coins < minCoinsSeen) minCoinsSeen = game.state.coins;
-    }
-
-    // The loop actually ran: lots of treats baked and sold.
     expect(game.state.salesTotal).toBeGreaterThan(50);
-
-    // Gently profitable: lifetime earnings are well ahead, current balance grew past the start.
     expect(game.state.coinsEarnedTotal).toBeGreaterThan(400);
     expect(game.state.coins).toBeGreaterThan(50);
+    expect(minCoinsSeen).toBeGreaterThanOrEqual(0); // forgiving — never negative
 
-    // Forgiving: coins never went negative at any point.
-    expect(minCoinsSeen).toBeGreaterThanOrEqual(0);
-
-    // Progression fired: pie (150) and cake (400) unlocked; days advanced.
     expect(game.state.isRecipeUnlocked('pie')).toBe(true);
     expect(game.state.isRecipeUnlocked('cake')).toBe(true);
     expect(unlocks).toContain('pie');
     expect(game.state.day).toBeGreaterThan(1);
 
-    // Upgrades were bought and actually took effect.
     expect(game.state.upgradesOwned.length).toBeGreaterThanOrEqual(1);
     if (game.state.hasUpgrade('speedyOven')) {
       expect(game.baking.bakeDurationMs('cookie')).toBe(14000);
@@ -105,10 +112,42 @@ describe('full play-through (auto-played, deterministic)', () => {
       expect(game.baking.ovens.length).toBe(2);
     }
 
-    // Every finished-goods count is a sane non-negative integer.
     for (const t of treatIds) {
       expect(Number.isInteger(game.state.getFinished(t))).toBe(true);
       expect(game.state.getFinished(t)).toBeGreaterThanOrEqual(0);
     }
+  });
+
+  it('saves, reloads, and the bakery survives exactly — then keeps playing', () => {
+    const save = new SaveSystem(new MemStorage());
+    const game = new GameController(new TypedEmitter(), makeRng(777));
+
+    runFor(game, 12000); // play ~20 minutes
+    const before = game.state.toSave();
+    expect(before.salesTotal).toBeGreaterThan(20);
+    expect(before.upgradesOwned.length).toBeGreaterThanOrEqual(1);
+
+    // Save, then reload into a brand-new controller (as a page reload would).
+    save.write(game.state);
+    const reloaded = save.load();
+    expect(reloaded).not.toBeNull();
+    expect(reloaded!.toSave()).toEqual(before); // exact restore — nothing lost
+
+    const game2 = new GameController(new TypedEmitter(), makeRng(42), reloaded!);
+    const salesAtReload = game2.state.salesTotal;
+    const minCoins = runFor(game2, 3000); // keep playing the restored bakery
+    expect(game2.state.salesTotal).toBeGreaterThan(salesAtReload);
+    expect(minCoins).toBeGreaterThanOrEqual(0);
+  });
+
+  it('export then import reproduces the bakery exactly', () => {
+    const save = new SaveSystem(new MemStorage());
+    const game = new GameController(new TypedEmitter(), makeRng(5));
+    runFor(game, 6000);
+
+    const json = save.exportJson(game.state);
+    const imported = save.importJson(json);
+    expect(imported).not.toBeNull();
+    expect(imported!.toSave()).toEqual(game.state.toSave());
   });
 });

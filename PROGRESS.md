@@ -17,8 +17,12 @@ Milestones from the PRD §12, built in order. Each ends with `npm run lint` + `n
       tips, cosmetic variants, object pooling.
 - [ ] **M4 — Economy, shop & progression.** Buy ingredients/upgrades; unlock recipes; apply upgrade
       effects; soft days + celebration; low-coin safety net.
-- [ ] **M5 — Save / load / settings.** Auto-save, versioned schema + `migrate()`, export/import JSON,
-      mute, name-your-bakery/baker.
+- [x] **M5 — Save / load / settings.** Auto-save to browser (debounced) + save on tab hide/close;
+      versioned format + `migrate()` (forward-compatible, clamps bad values, drops unknown ids,
+      sanitizes names); export/import `.json` backup; Settings panel (sound, save/load file, start
+      over); name-your-bakery with fun random defaults + 🎲 reroll on the title. Play-through test
+      extended: play → save → reload → exact restore → keeps playing; export/import round-trip;
+      migration/corrupt-file unit tests. ✅
 - [ ] **M6 — Art & audio integration + polish.** Real-art swap via manifest; audio + mute persist;
       accessibility (§8.4); juice; responsive pass.
 - [ ] **M7 — Deploy & document.** GitHub Pages live; finalize README; playtest checklist.

@@ -22,8 +22,12 @@ export class GameController {
   readonly progression: ProgressionSystem;
   readonly shop: ShopSystem;
 
-  constructor(bus: TypedEmitter = EventBus, rng: () => number = Math.random) {
-    this.state = GameState.createNew();
+  constructor(
+    bus: TypedEmitter = EventBus,
+    rng: () => number = Math.random,
+    state: GameState = GameState.createNew(),
+  ) {
+    this.state = state;
     this.inventory = new InventorySystem(this.state, bus);
     this.economy = new EconomySystem(this.state, bus);
     this.baking = new BakingSystem(this.state, this.inventory, bus);

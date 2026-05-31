@@ -62,10 +62,14 @@ export class GameState {
   lastSafetyNetDay = 0;
   settings: GameSettings = { muted: false };
 
-  /** Fresh game with PRD §5.4 starting state. */
-  static createNew(): GameState {
+  /** Fresh game with PRD §5.4 starting state (optionally with chosen bakery/baker names). */
+  static createNew(names?: { bakeryName: string; bakerName: string }): GameState {
     const s = new GameState();
     s.ingredients = { ...zeroIngredients(), ...STARTING.ingredients };
+    if (names) {
+      s.bakeryName = names.bakeryName;
+      s.bakerName = names.bakerName;
+    }
     return s;
   }
 

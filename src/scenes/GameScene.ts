@@ -1,14 +1,18 @@
 import Phaser from 'phaser';
 import { PALETTE } from '../assets/assetManifest';
+import { pickRandomNames, type BakeryNames } from '../data/names';
 import { getRecipe, treatIds } from '../data/recipes';
 import { getUpgrade } from '../data/upgrades';
 import type { TreatId } from '../data/types';
 import { EventBus } from '../events/EventBus';
 import { GameController } from '../state/GameController';
+import { GameState } from '../state/GameState';
+import { SaveSystem } from '../systems/SaveSystem';
 import { Oven } from '../entities/Oven';
 import { CustomerSprite } from '../entities/CustomerSprite';
 import { BakePanel } from '../ui/BakePanel';
 import { ShopPanel } from '../ui/ShopPanel';
+import { SettingsPanel } from '../ui/SettingsPanel';
 import { Button } from '../ui/Button';
 import { prefersReducedMotion } from '../utils/motion';
 
@@ -25,11 +29,12 @@ interface Slot {
 /**
  * The bakery. Drives one GameController (state + every system) and renders it: tap Bake to
  * bake, tap Shop to buy ingredients/upgrades, finished treats appear on the display, customers
- * slide in wanting a treat, tap to serve. Rendering reacts to events; it never mutates state
- * directly (PRD §9.2).
+ * slide in wanting a treat, tap to serve. The game auto-saves and reloads itself.
+ * Rendering reacts to events; it never mutates state directly (PRD §9.2).
  */
 export class GameScene extends Phaser.Scene {
   private controller!: GameController;
+  private saveSystem!: SaveSystem;
   private ovens: Oven[] = [];
   private customerSprites = new Map<string, CustomerSprite>();
   private slotByCustomer = new Map<string, number>();
@@ -37,7 +42,10 @@ export class GameScene extends Phaser.Scene {
   private displayContainer!: Phaser.GameObjects.Container;
   private bakePanel?: BakePanel;
   private shopPanel?: ShopPanel;
+  private settingsPanel?: SettingsPanel;
   private offHandlers: Array<() => void> = [];
+  private onVisibility?: () => void;
+  private onUnload?: () => void;
 
   constructor() {
     super('Game');
@@ -47,8 +55,19 @@ export class GameScene extends Phaser.Scene {
     const { width, height } = this.scale;
 
     EventBus.clear(); // fresh listeners for this play session
-    this.controller = new GameController(EventBus);
+
+    // Load a saved bakery if there is one; otherwise start fresh with the chosen names.
+    this.saveSystem = new SaveSystem();
+    const loaded = this.saveSystem.load();
+    const state =
+      loaded ??
+      GameState.createNew(
+        (this.registry.get('newGameNames') as BakeryNames | undefined) ?? pickRandomNames(),
+      );
+
+    this.controller = new GameController(EventBus, Math.random, state);
     this.registry.set('state', this.controller.state);
+    this.sound.mute = this.controller.state.settings.muted;
 
     // Scene dressing.
     this.add.image(width / 2, height / 2, 'env_background').setDisplaySize(width, height);
@@ -83,6 +102,15 @@ export class GameScene extends Phaser.Scene {
       bgColor: hex(PALETTE.butterYellow),
       onClick: () => this.openShopPanel(),
     });
+    new Button(this, width - 56, 116, {
+      label: '⚙️',
+      width: 56,
+      height: 56,
+      bgColor: hex(PALETTE.cream),
+      onClick: () => this.openSettingsPanel(),
+    });
+
+    const queueSave = () => this.saveSystem.scheduleWrite(this.controller.state);
 
     this.offHandlers.push(
       EventBus.on('BAKE_COMPLETE', (p) => this.ovens[p.ovenIndex]?.bounce()),
@@ -102,13 +130,34 @@ export class GameScene extends Phaser.Scene {
       EventBus.on('SAFETY_NET_GRANTED', () =>
         this.showToast(`A little flour to get you baking again! 🌾`),
       ),
+      // Auto-save on every meaningful change (debounced into one write).
+      EventBus.on('COINS_CHANGED', queueSave),
+      EventBus.on('INGREDIENTS_CHANGED', queueSave),
+      EventBus.on('FINISHED_GOODS_CHANGED', queueSave),
+      EventBus.on('UPGRADE_PURCHASED', queueSave),
+      EventBus.on('RECIPE_UNLOCKED', queueSave),
+      EventBus.on('DAY_ADVANCED', queueSave),
+      EventBus.on('SAFETY_NET_GRANTED', queueSave),
     );
+
+    // Flush the save when the tab is hidden or closed, so nothing is lost.
+    if (typeof window !== 'undefined') {
+      this.onVisibility = () => this.saveSystem.flush();
+      this.onUnload = () => this.saveSystem.write(this.controller.state);
+      window.addEventListener('visibilitychange', this.onVisibility);
+      window.addEventListener('beforeunload', this.onUnload);
+    }
 
     this.scene.launch('UI');
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.offHandlers.forEach((off) => off());
       this.offHandlers = [];
+      this.saveSystem.flush();
+      if (typeof window !== 'undefined') {
+        if (this.onVisibility) window.removeEventListener('visibilitychange', this.onVisibility);
+        if (this.onUnload) window.removeEventListener('beforeunload', this.onUnload);
+      }
     });
   }
 
@@ -154,8 +203,12 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private anyPanelOpen(): boolean {
+    return !!(this.bakePanel || this.shopPanel || this.settingsPanel);
+  }
+
   private openBakePanel(): void {
-    if (this.bakePanel || this.shopPanel) return;
+    if (this.anyPanelOpen()) return;
     this.bakePanel = new BakePanel(this, this.controller.state, this.controller.baking, () => {
       this.bakePanel?.destroy();
       this.bakePanel = undefined;
@@ -163,11 +216,32 @@ export class GameScene extends Phaser.Scene {
   }
 
   private openShopPanel(): void {
-    if (this.bakePanel || this.shopPanel) return;
+    if (this.anyPanelOpen()) return;
     this.shopPanel = new ShopPanel(this, this.controller.state, this.controller.shop, () => {
       this.shopPanel?.destroy();
       this.shopPanel = undefined;
     });
+  }
+
+  private openSettingsPanel(): void {
+    if (this.anyPanelOpen()) return;
+    this.settingsPanel = new SettingsPanel(this, this.controller.state, this.saveSystem, {
+      onApplyImport: () => this.restartGame(),
+      onStartOver: () => {
+        this.scene.stop('UI');
+        this.scene.start('Title');
+      },
+      onClose: () => {
+        this.settingsPanel?.destroy();
+        this.settingsPanel = undefined;
+      },
+    });
+  }
+
+  /** Reload the scene into whatever save is now on disk (used after importing a backup). */
+  private restartGame(): void {
+    this.scene.stop('UI');
+    this.scene.restart();
   }
 
   private onUpgradePurchased(upgradeId: ReturnType<typeof getUpgrade>['id']): void {
