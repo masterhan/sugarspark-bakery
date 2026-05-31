@@ -29,7 +29,7 @@ export class TitleScene extends Phaser.Scene {
       .setAlpha(0.5);
 
     this.add
-      .text(width / 2, height * 0.26, 'Sugarspark Bakery', {
+      .text(width / 2, height * 0.2, 'Sugarspark Bakery', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '64px',
         color: '#7A4A26',
@@ -37,7 +37,7 @@ export class TitleScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    this.add.image(width / 2, height * 0.5, 'treat_cupcake').setScale(0.7);
+    this.add.image(width / 2, height * 0.42, 'treat_cupcake').setScale(0.6);
 
     const existing = new SaveSystem().read();
     const continuing = existing !== null;
@@ -45,7 +45,7 @@ export class TitleScene extends Phaser.Scene {
     const bakeryName = continuing ? existing.bakeryName : this.freshName();
 
     this.add
-      .text(width / 2, height * 0.34, continuing ? 'Welcome back to' : 'Your new bakery:', {
+      .text(width / 2, height * 0.6, continuing ? 'Welcome back to' : 'Your new bakery:', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '22px',
         color: '#7A4A26',
@@ -53,7 +53,7 @@ export class TitleScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.nameText = this.add
-      .text(width / 2, height * 0.39, bakeryName, {
+      .text(width / 2, height * 0.66, bakeryName, {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '34px',
         color: '#FF8FB1',
@@ -61,9 +61,9 @@ export class TitleScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    // Reroll the random name — only for a brand-new game.
+    // Reroll the random name — only for a brand-new game. Placed clear to the right of the name.
     if (!continuing) {
-      new Button(this, width / 2 + 260, height * 0.39, {
+      new Button(this, width * 0.8, height * 0.66, {
         label: '🎲',
         width: 60,
         height: 60,
@@ -76,7 +76,7 @@ export class TitleScene extends Phaser.Scene {
       });
     }
 
-    new Button(this, width / 2, height * 0.78, {
+    new Button(this, width / 2, height * 0.84, {
       label: continuing ? 'Continue' : 'Play',
       icon: '▶',
       width: 280,
