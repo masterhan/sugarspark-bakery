@@ -119,6 +119,11 @@ describe('save migration', () => {
     expect(data!.bakeryName.length).toBeLessThanOrEqual(24);
   });
 
+  it('keeps the spaces in a normal multi-word bakery name', () => {
+    const data = migrate({ coins: 10, bakeryName: 'Honeybee Bakery' });
+    expect(data!.bakeryName).toBe('Honeybee Bakery');
+  });
+
   it('rejects non-save objects and garbage', () => {
     expect(migrate(null)).toBeNull();
     expect(migrate(42)).toBeNull();
