@@ -21,9 +21,15 @@ function hexToNumber(hex: string): number {
 /**
  * Big, rounded, high-contrast, tappable button with icon + label (PRD §8.3/§8.4).
  * Reusable everywhere — never clone this.
+ *
+ * IMPORTANT: the interactive object is the background RECTANGLE, not the Container.
+ * Phaser hit-tests plain GameObjects reliably; interactive Containers are flaky (their
+ * bounds collapse to child bounds), which silently broke every button. Routing input
+ * through the rectangle is the robust, idiomatic fix.
  */
 export class Button extends Phaser.GameObjects.Container {
-  private bg: Phaser.GameObjects.Graphics;
+  private readonly hit: Phaser.GameObjects.Rectangle;
+  private readonly outline: Phaser.GameObjects.Graphics;
   private readonly boxW: number;
   private readonly boxH: number;
   private enabled = true;
@@ -35,31 +41,40 @@ export class Button extends Phaser.GameObjects.Container {
     this.boxH = Math.max(MIN_TARGET, opts.height ?? 72);
     const fill = opts.bgColor ?? hexToNumber(PALETTE.frostingPink);
 
-    this.bg = scene.add.graphics();
-    this.drawBg(fill);
-    this.add(this.bg);
+    // Solid rounded body: a rectangle (the interactive hit target) + a graphics outline.
+    this.hit = scene.add
+      .rectangle(0, 0, this.boxW, this.boxH, fill, 1)
+      .setStrokeStyle(3, 0x000000, 0.12);
+    this.hit.setInteractive({ useHandCursor: true });
+    this.add(this.hit);
+
+    // Rounded corners drawn over the rectangle so it reads as a soft button.
+    this.outline = scene.add.graphics();
+    this.outline.fillStyle(fill, 1);
+    this.outline.fillRoundedRect(-this.boxW / 2, -this.boxH / 2, this.boxW, this.boxH, 18);
+    this.outline.lineStyle(3, 0x000000, 0.12);
+    this.outline.strokeRoundedRect(-this.boxW / 2, -this.boxH / 2, this.boxW, this.boxH, 18);
+    this.add(this.outline);
+    this.hit.setFillStyle(fill, 0.001); // keep rect transparent; the rounded graphic shows
 
     const labelText = opts.icon ? `${opts.icon}  ${opts.label}` : opts.label;
-    const text = scene.add
-      .text(0, 0, labelText, {
-        fontFamily: 'system-ui, sans-serif',
-        fontSize: '28px',
-        color: '#ffffff',
-        fontStyle: 'bold',
-      })
-      .setOrigin(0.5);
-    this.add(text);
-
-    this.setSize(this.boxW, this.boxH);
-    this.setInteractive(
-      new Phaser.Geom.Rectangle(-this.boxW / 2, -this.boxH / 2, this.boxW, this.boxH),
-      Phaser.Geom.Rectangle.Contains,
+    this.add(
+      scene.add
+        .text(0, 0, labelText, {
+          fontFamily: 'system-ui, sans-serif',
+          fontSize: '28px',
+          color: '#ffffff',
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5),
     );
 
-    this.on('pointerover', () => this.enabled && this.setScale(1.04));
-    this.on('pointerout', () => this.setScale(1));
-    this.on('pointerdown', () => this.enabled && this.press());
-    this.on('pointerup', () => {
+    this.hit.on('pointerover', () => this.enabled && !prefersReducedMotion() && this.setScale(1.04));
+    this.hit.on('pointerout', () => this.setScale(1));
+    this.hit.on('pointerdown', () => {
+      if (this.enabled && !prefersReducedMotion()) this.setScale(0.96);
+    });
+    this.hit.on('pointerup', () => {
       if (!this.enabled) return;
       this.setScale(1);
       opts.onClick();
@@ -68,22 +83,11 @@ export class Button extends Phaser.GameObjects.Container {
     scene.add.existing(this);
   }
 
-  private drawBg(fill: number): void {
-    this.bg.clear();
-    this.bg.fillStyle(fill, 1);
-    this.bg.fillRoundedRect(-this.boxW / 2, -this.boxH / 2, this.boxW, this.boxH, 18);
-    this.bg.lineStyle(3, 0x000000, 0.12);
-    this.bg.strokeRoundedRect(-this.boxW / 2, -this.boxH / 2, this.boxW, this.boxH, 18);
-  }
-
-  private press(): void {
-    if (prefersReducedMotion()) return;
-    this.setScale(0.96);
-  }
-
   setEnabled(enabled: boolean): this {
     this.enabled = enabled;
     this.setAlpha(enabled ? 1 : 0.5);
+    if (this.enabled) this.hit.setInteractive({ useHandCursor: true });
+    else this.hit.disableInteractive();
     return this;
   }
 }
