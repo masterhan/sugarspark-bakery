@@ -84,6 +84,9 @@ export class Button extends Phaser.GameObjects.Container {
   }
 
   setEnabled(enabled: boolean): this {
+    // Guard against being called after the button (or its scene) was destroyed — e.g. a panel
+    // refresh firing on an event right as the panel tears down. Touching a dead object throws.
+    if (!this.scene || !this.hit || !this.hit.scene) return this;
     this.enabled = enabled;
     this.setAlpha(enabled ? 1 : 0.5);
     if (this.enabled) this.hit.setInteractive({ useHandCursor: true });
