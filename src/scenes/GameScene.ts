@@ -126,9 +126,12 @@ export class GameScene extends Phaser.Scene {
     this.offHandlers.push(
       EventBus.on('BAKE_STARTED', () => {
         // During onboarding, close the panel so the kid sees the oven working + advance the coach.
+        // Defer the destroy to the next frame: destroying mid-event (during a render/UV update)
+        // tore down a panel text object Phaser was still drawing -> 'drawImage' crash.
         if (this.coachStep === 'pickRecipe') {
-          this.bakePanel?.destroy();
+          const panel = this.bakePanel;
           this.bakePanel = undefined;
+          this.time.delayedCall(0, () => panel?.destroy());
           this.setCoachStep('waitBake');
         }
       }),
