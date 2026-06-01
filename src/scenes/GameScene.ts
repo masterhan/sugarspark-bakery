@@ -14,7 +14,11 @@ import { BakePanel } from '../ui/BakePanel';
 import { ShopPanel } from '../ui/ShopPanel';
 import { SettingsPanel } from '../ui/SettingsPanel';
 import { Button } from '../ui/Button';
+import { Coach } from '../ui/Coach';
 import { prefersReducedMotion } from '../utils/motion';
+
+/** Steps of the first-time guided onboarding. */
+type CoachStep = 'tapBake' | 'pickRecipe' | 'waitBake' | 'serve' | 'done';
 
 function hex(c: string): number {
   return Phaser.Display.Color.HexStringToColor(c).color;
@@ -46,6 +50,8 @@ export class GameScene extends Phaser.Scene {
   private offHandlers: Array<() => void> = [];
   private onVisibility?: () => void;
   private onUnload?: () => void;
+  private coach!: Coach;
+  private coachStep: CoachStep = 'done';
 
   constructor() {
     super('Game');
@@ -74,6 +80,11 @@ export class GameScene extends Phaser.Scene {
     this.add.rectangle(width / 2, height * 0.86, width, height * 0.3, 0x000000, 0.04);
     this.add.image(width * 0.5, height * 0.5, 'env_display').setScale(1.15);
     this.add.image(width * 0.85, height * 0.5, 'env_register').setScale(0.7);
+
+    // Persistent labels so the scene explains itself at a glance (picture-first, PRD §8.3).
+    this.stationLabel('Oven', width * 0.18, height * 0.62);
+    this.stationLabel('Treats for sale', width * 0.5, height * 0.62);
+    this.stationLabel('Cash', width * 0.85, height * 0.62);
 
     this.syncOvens();
 
@@ -113,7 +124,24 @@ export class GameScene extends Phaser.Scene {
     const queueSave = () => this.saveSystem.scheduleWrite(this.controller.state);
 
     this.offHandlers.push(
-      EventBus.on('BAKE_COMPLETE', (p) => this.ovens[p.ovenIndex]?.bounce()),
+      EventBus.on('BAKE_STARTED', () => {
+        // During onboarding, close the panel so the kid sees the oven working + advance the coach.
+        if (this.coachStep === 'pickRecipe') {
+          this.bakePanel?.destroy();
+          this.bakePanel = undefined;
+          this.setCoachStep('waitBake');
+        }
+      }),
+      EventBus.on('BAKE_COMPLETE', (p) => {
+        this.ovens[p.ovenIndex]?.bounce();
+        // Onboarding: treats are ready — if someone's already waiting for one, point at them.
+        if (this.coachStep === 'waitBake') {
+          const ready = this.controller.customers.active.find(
+            (c) => this.controller.state.getFinished(c.wantedTreat) > 0,
+          );
+          if (ready) this.setCoachStep('serve');
+        }
+      }),
       EventBus.on('FINISHED_GOODS_CHANGED', () => this.renderDisplay()),
       EventBus.on('CUSTOMER_ARRIVED', (p) => this.onCustomerArrived(p.customerId)),
       EventBus.on('CUSTOMER_SERVED', (p) => this.onCustomerServed(p.customerId, p.price + p.tip)),
@@ -150,6 +178,10 @@ export class GameScene extends Phaser.Scene {
 
     this.scene.launch('UI');
 
+    // Friendly guided onboarding for first-time players (skipped once they've baked before).
+    this.coach = new Coach(this);
+    this.startOnboarding();
+
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.offHandlers.forEach((off) => off());
       this.offHandlers = [];
@@ -170,6 +202,53 @@ export class GameScene extends Phaser.Scene {
       this.customerSprites
         .get(order.id)
         ?.setPatience(order.patienceRemainingMs / order.patienceTotalMs);
+    }
+  }
+
+  /** Small caption under a station so the scene reads clearly without instructions. */
+  private stationLabel(text: string, x: number, y: number): void {
+    this.add
+      .text(x, y, text, {
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: '16px',
+        color: '#7A4A26',
+      })
+      .setOrigin(0.5)
+      .setAlpha(0.7);
+  }
+
+  // ── First-time guided onboarding ───────────────────────────────────────────
+
+  /** Begin the step-by-step coach, unless this player has clearly played before. */
+  private startOnboarding(): void {
+    const s = this.controller.state;
+    const playedBefore = s.salesTotal > 0 || s.coinsEarnedTotal > 0 || s.day > 1;
+    if (playedBefore) {
+      this.coachStep = 'done';
+      return;
+    }
+    this.setCoachStep('tapBake');
+  }
+
+  private setCoachStep(step: CoachStep): void {
+    this.coachStep = step;
+    const { width, height } = this.scale;
+    switch (step) {
+      case 'tapBake':
+        this.coach.show('Tap Bake to make yummy treats! 🍪', width * 0.15, height * 0.92 - 50, 'down');
+        break;
+      case 'pickRecipe':
+        this.coach.show('Pick a treat, then tap its Bake button!', width * 0.5, height * 0.2, 'up');
+        break;
+      case 'waitBake':
+        this.coach.show('Yay! Now wait for it to bake… 🔥', width * 0.18, height * 0.62, 'up');
+        break;
+      case 'serve':
+        this.coach.show('A customer! Tap them to give a treat 😋', width * 0.5, height * 0.72, 'down');
+        break;
+      case 'done':
+        this.coach.hide();
+        break;
     }
   }
 
@@ -209,6 +288,7 @@ export class GameScene extends Phaser.Scene {
 
   private openBakePanel(): void {
     if (this.anyPanelOpen()) return;
+    if (this.coachStep === 'tapBake') this.setCoachStep('pickRecipe');
     this.bakePanel = new BakePanel(this, this.controller.state, this.controller.baking, () => {
       this.bakePanel?.destroy();
       this.bakePanel = undefined;
@@ -263,9 +343,15 @@ export class GameScene extends Phaser.Scene {
     );
     sprite.walkIn(slot.x, slot.y);
     this.customerSprites.set(customerId, sprite);
+
+    // Onboarding: once a treat is in stock and a customer is waiting, point at them.
+    if (this.coachStep === 'waitBake' && this.controller.state.getFinished(order.wantedTreat) > 0) {
+      this.setCoachStep('serve');
+    }
   }
 
   private onCustomerServed(customerId: string, total: number): void {
+    if (this.coachStep === 'serve') this.setCoachStep('done'); // first sale — they've got it
     const sprite = this.customerSprites.get(customerId);
     if (!sprite) return;
     this.flyCoins(sprite.x, sprite.y, total);
